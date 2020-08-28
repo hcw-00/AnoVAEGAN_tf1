@@ -5,7 +5,7 @@ from utils import *
 
 
 def encoder(inputs, reuse=False):
-    with tf.variable_scope("encoder"):
+    with tf.variable_scope("vae_encoder"):
         # image is 256 x 256 x input_c_dim
         if reuse:
             tf.get_variable_scope().reuse_variables()
@@ -22,7 +22,7 @@ def encoder(inputs, reuse=False):
         return mean, covariance
 
 def decoder(inputs, reuse=False):
-    with tf.variable_scope("decoder"):
+    with tf.variable_scope("vae_decoder"):
         if reuse:
             tf.get_variable_scope().reuse_variables()
         else:
@@ -46,7 +46,7 @@ def discriminator(inputs, reuse=False):
                 net = slim.conv2d(net, 32, 4, 2, scope='conv_%d' % (i+1))
             net = slim.conv2d(net, 32*6, 4, 2, scope='conv_-2')
         net = slim.conv2d(net, 1, 4, 2, scope='conv_-1')
-        return net
+    return net
     
 def feature_extraction_network(inputs, reuse=False):
     '''
@@ -159,3 +159,15 @@ def mse_criterion(in_, target):
 
 def sce_criterion(logits, labels):
     return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=labels))
+
+def get_random_crop(image, crop_height, crop_width):
+
+    max_x = image.shape[1] - crop_width
+    max_y = image.shape[0] - crop_height
+
+    x = np.random.randint(0, max_x)
+    y = np.random.randint(0, max_y)
+
+    crop = image[y: y + crop_height, x: x + crop_width]
+
+    return crop

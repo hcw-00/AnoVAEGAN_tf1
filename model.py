@@ -7,6 +7,7 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 from collections import namedtuple
+from sklearn.utils import shuffle
 
 from module import *
 from utils import *
@@ -23,10 +24,6 @@ class vae(object):
         
         self.alpha = args.alpha
 
-        self.feature_extraction_network = feature_extraction_network
-        self.prediction_network = prediction_network
-        self.recognition_network = recognition_network
-        self.reconstruction_network = reconstruction_network
         self.encoder = encoder
         self.decoder = decoder
         self.discriminator = discriminator
@@ -36,6 +33,8 @@ class vae(object):
         self.sample_dir = args.pj_dir + 'sample'
         self.test_dir =  args.pj_dir + 'test'
         self.dataset_dir = args.pj_dir + 'data'
+        dir_path = "D:/Dataset/apple2orange/"
+        self.img_path = self.load_data(dir_path)
 
 
         if not os.path.exists(self.checkpoint_dir):
@@ -52,33 +51,25 @@ class vae(object):
         
         self.saver = tf.train.Saver(max_to_keep=100)
         
-        self._load_dataset(args)
 
-    def _load_dataset(self, args):
-        if len(os.listdir(self.dataset_dir)) == 0:
-            gdd.download_file_from_google_drive(file_id='1F1l1c0D4unefRK9m6i2WqBO7dPvkbdKQ',
-                                        dest_path=self.dataset_dir+'/data.zip',
-                                        unzip=True)
-        if args.phase == 'train':
-            self.ds = pd.read_csv(self.dataset_dir+'/KMAC_new_RCWA_raw_dataset_200612_norm_filename_0.7_train.csv')
-        else:
-            self.ds = pd.read_csv(self.dataset_dir+'/KMAC_new_RCWA_raw_dataset_200612_norm_filename_0.7_test.csv')
+    def load_data(self, dir_path):
+        img_dir_path = dir_path
+        img_name = os.listdir(img_dir_path)
+        img_path = [img_dir_path + i for i in img_name]
+        return img_path
 
-    def _load_batch(self, dataset, idx):
-        
-        filename_list = dataset.iloc[:,0][idx * self.batch_size:(idx + 1) * self.batch_size].values.tolist()
+    def _load_batch(self, img_path, idx):
+        load_size = 286
+        crop_size = 256
+        img_batch = []
+        for i in range(self.batch_size):
+            img = cv2.imread(img_path[i+idx*self.batch_size])
+            img = cv2.resize(img, (load_size,load_size))
+            img = get_random_crop(img, crop_size, crop_size)
+            img = img/127.5 - 1
+            img_batch.append(img)
 
-        # input batch (2d binary image)
-        input_batch = []
-        for i in range(len(filename_list)):
-            temp_img = cv2.imread(self.dataset_dir+'/64/'+filename_list[i], 0)
-            temp_img = temp_img/255
-            input_batch.append(list(temp_img))
-        input_batch = np.expand_dims(input_batch, axis=3)
-
-        target_batch = np.expand_dims(dataset.iloc[:,6:][idx * self.batch_size:(idx + 1) * self.batch_size].values.tolist(), 2) # [0.543, ... ] 226개
-
-        return input_batch, target_batch, filename_list
+        return img_batch
 
 
     def _build_model(self, args):
@@ -95,26 +86,29 @@ class vae(object):
         self.d_fake = self.discriminator(self.recon_image, reuse=True)
 
         # Losses
-        # KL div loss
+        # L_VAE
         self.KL_div_loss = 0.5 * tf.reduce_sum(tf.square(mu) + tf.exp(log_sigma) - log_sigma - 1., 1)
-        self.reconstruction_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(self.geo_labeled,[self.batch_size,64*64]),
-                                                                    logits=tf.reshape(self.geo_reconstructed_l,[self.batch_size,64*64]))
-        self.loss_l = args.beta*tf.reduce_mean(self.KL_div_loss) + tf.reduce_mean(self.reconstruction_loss)
-
-        # Regression loss
-        self.loss_r = self.alpha * self.mse(self.spectra_l_predicted, self.spectrum_target)
+        self.reconstruction_loss = mse_criterion(self.input_image, self.recon_image)
+        #self.reconstruction_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(self.geo_labeled,[self.batch_size,64*64]),
+        #                                                            logits=tf.reshape(self.geo_reconstructed_l,[self.batch_size,64*64]))
+        self.gen_adv_loss = mse_criterion(self.d_fake, tf.ones_like(self.d_fake))
+        self.l_vae = args.beta*tf.reduce_mean(self.KL_div_loss) + tf.reduce_mean(self.reconstruction_loss) + tf.reduce_mean(self.gen_adv_loss)
+        
+        # L_Dis
+        self.d_real_loss = mse_criterion(self.d_real, tf.ones_like(self.d_real))
+        self.d_fake_loss = mse_criterion(self.d_fake, tf.zeros_like(self.d_fake))
+        self.l_dis = (self.d_real_loss + self.d_fake_loss)/2
 
         # Total loss
-        #self.total_loss = self.loss_l + self.loss_u + self.loss_r
         self.total_loss = self.loss_l + self.loss_r
-
-
 
         self.loss_summary = tf.summary.scalar("loss", self.total_loss)
 
         self.t_vars = tf.trainable_variables()
         print("trainable variables : ")
         print(self.t_vars)
+        self.vae_vars = [i for i in self.t_vars if 'vae' in self.t_vars.name]
+        self.disc_vars = [i for i in self.t_vars if 'discriminator' in self.t_vars.name]
         
 
     def train(self, args):
@@ -124,8 +118,11 @@ class vae(object):
         global_step = tf.Variable(0, trainable=False)
         learning_rate = tf.train.exponential_decay(self.lr, global_step, args.epoch_step, 0.96, staircase=False)
 
-        self.optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
-            .minimize(self.total_loss, var_list=self.t_vars, global_step = global_step)
+        self.vae_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
+            .minimize(self.l_vae, var_list=self.vae_vars, global_step = global_step)
+        self.d_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
+            .minimize(self.l_dis, var_list=disc_vars, global_step = global_step)
+
         #self.optim = tf.train.GradientDescentOptimizer(learning_rate) \
         #    .minimize(self.total_loss, var_list=self.t_vars, global_step = global_step)
 
@@ -147,22 +144,26 @@ class vae(object):
             
             batch_idxs = len(self.ds) // self.batch_size
 
-            ds_1 = self.ds.sample(frac=1)
+            self.img_path = shuffle(self.img_path)
             
             for idx in range(0, batch_idxs):
 
-                input_batch, target_batch, _ = self._load_batch(ds_1, idx)
+                input_batch = self._load_batch(self.img_path, idx)
 
                 # Update network
-                kl, marginal, la_v, geo_re, _, loss, loss_l,loss_r, c_lr, summary_str = self.sess.run([self.KL_div_loss,self.reconstruction_loss, self.latent_z, self.geo_reconstructed_l, self.optim, self.total_loss, self.loss_l, self.loss_r, learning_rate, self.loss_summary],
-                                                   feed_dict={self.geo_labeled: input_batch, self.spectrum_target: target_batch, self.lr: args.lr})
+                _ = self.sess.run([self.vae_optim], \
+                    feed_dict={self.input_image: input_batch, self.lr: args.lr})
+
+                _ = self.sess.run([self.d_optim], \
+                    feed_dict={self.input_image: input_batch, self.lr: args.lr})
+
 
                 self.writer.add_summary(summary_str, counter)
 
                 counter += 1
                 if idx%10==0:
-                    print(("Epoch: [%2d] [%4d/%4d] time: %4.4f loss: %4.4f loss_label: %4.4f loss_reg: %4.4f lr: %4.7f loss_kl: %4.7f loss_recon: %4.7f" % (
-                        epoch, idx, batch_idxs, time.time() - start_time, loss,loss_l,loss_r, c_lr, np.mean(kl), np.mean(marginal))))
+                    print(("Epoch: [%2d] [%4d/%4d] time: %4.4f loss: %4.4f lr: %4.7f" % (
+                        epoch, idx, batch_idxs, time.time() - start_time, loss, c_lr)))
 
             if epoch%500 == 0:
                 self.save(self.checkpoint_dir, counter)
