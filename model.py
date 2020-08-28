@@ -1,6 +1,6 @@
 from __future__ import division
 import os
-from google_drive_downloader import GoogleDriveDownloader as gdd
+#from google_drive_downloader import GoogleDriveDownloader as gdd
 import time
 from glob import glob
 import tensorflow as tf
@@ -21,8 +21,6 @@ class vae(object):
         self.batch_size = args.batch_size
         #self.image_size = args.fine_size
         self.L1_lambda = args.L1_lambda
-        
-        self.alpha = args.alpha
 
         self.encoder = encoder
         self.decoder = decoder
@@ -33,7 +31,7 @@ class vae(object):
         self.sample_dir = args.pj_dir + 'sample'
         self.test_dir =  args.pj_dir + 'test'
         self.dataset_dir = args.pj_dir + 'data'
-        dir_path = "D:/Dataset/apple2orange/"
+        dir_path = "D:/Experimental/2020/CycleGAN-tensorflow/datasets/200513_HKC_7th/trainA/"
         self.img_path = self.load_data(dir_path)
 
 
@@ -63,10 +61,11 @@ class vae(object):
         crop_size = 256
         img_batch = []
         for i in range(self.batch_size):
-            img = cv2.imread(img_path[i+idx*self.batch_size])
+            img = cv2.imread(img_path[i+idx*self.batch_size],0)
             img = cv2.resize(img, (load_size,load_size))
             img = get_random_crop(img, crop_size, crop_size)
             img = img/127.5 - 1
+            img = np.expand_dims(img, 2)
             img_batch.append(img)
 
         return img_batch
@@ -99,17 +98,23 @@ class vae(object):
         self.d_fake_loss = mse_criterion(self.d_fake, tf.zeros_like(self.d_fake))
         self.l_dis = (self.d_real_loss + self.d_fake_loss)/2
 
-        # Total loss
-        self.total_loss = self.loss_l + self.loss_r
-
-        self.loss_summary = tf.summary.scalar("loss", self.total_loss)
+        self.loss_summary = tf.summary.scalar("loss", self.l_dis)
 
         self.t_vars = tf.trainable_variables()
         print("trainable variables : ")
         print(self.t_vars)
-        self.vae_vars = [i for i in self.t_vars if 'vae' in self.t_vars.name]
-        self.disc_vars = [i for i in self.t_vars if 'discriminator' in self.t_vars.name]
+        self.vae_vars = [vars for vars in self.t_vars if 'vae' in vars.name]
+        self.disc_vars = [vars for vars in self.t_vars if 'discriminator' in vars.name]
         
+    ##Create Loss Functions
+    #def sigmoid_cross_entropy_with_logits(x, y):
+    #    return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, labels=y)
+    #self.d_loss_real = tf.reduce_mean(
+    #  sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
+    #self.d_loss_fake = tf.reduce_mean(
+    #  sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
+    #self.g_loss = tf.reduce_mean(
+    #  sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
 
     def train(self, args):
         
@@ -121,7 +126,7 @@ class vae(object):
         self.vae_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
             .minimize(self.l_vae, var_list=self.vae_vars, global_step = global_step)
         self.d_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
-            .minimize(self.l_dis, var_list=disc_vars, global_step = global_step)
+            .minimize(self.l_dis, var_list=self.disc_vars, global_step = global_step)
 
         #self.optim = tf.train.GradientDescentOptimizer(learning_rate) \
         #    .minimize(self.total_loss, var_list=self.t_vars, global_step = global_step)
@@ -141,36 +146,36 @@ class vae(object):
                 print(" [!] Load failed...")
 
         for epoch in range(args.epoch):
-            
-            batch_idxs = len(self.ds) // self.batch_size
 
             self.img_path = shuffle(self.img_path)
+            
+            batch_idxs = len(self.img_path) // self.batch_size
             
             for idx in range(0, batch_idxs):
 
                 input_batch = self._load_batch(self.img_path, idx)
 
                 # Update network
-                _ = self.sess.run([self.vae_optim], \
-                    feed_dict={self.input_image: input_batch, self.lr: args.lr})
+                _, recon_img, input_img = self.sess.run([self.vae_optim, self.recon_image, self.input_image], \
+                    feed_dict={self.input_image: input_batch, self.lr: 0.001})#args.lr})
 
-                _ = self.sess.run([self.d_optim], \
-                    feed_dict={self.input_image: input_batch, self.lr: args.lr})
+                _, c_lr, vae_loss, disc_loss = self.sess.run([self.d_optim, learning_rate, self.l_vae, self.l_dis], \
+                    feed_dict={self.input_image: input_batch, self.lr: 0.01})#args.lr})
 
 
-                self.writer.add_summary(summary_str, counter)
+                #self.writer.add_summary(summary_str, counter)
 
                 counter += 1
                 if idx%10==0:
-                    print(("Epoch: [%2d] [%4d/%4d] time: %4.4f loss: %4.4f lr: %4.7f" % (
-                        epoch, idx, batch_idxs, time.time() - start_time, loss, c_lr)))
+                    print(("Epoch: [%2d] [%4d/%4d] time: %4.4f vae loss: %4.4f disc loss: %4.4f lr: %4.7f" % (
+                        epoch, idx, batch_idxs, time.time() - start_time, vae_loss, disc_loss, c_lr)))
 
             if epoch%500 == 0:
                 self.save(self.checkpoint_dir, counter)
 
             if epoch%5 == 0: # save sample image
-                cv2.imwrite(self.sample_dir + '/epoch_'+str(epoch)+'_pred.bmp',(geo_re[0,:,:,0])*255)
-                cv2.imwrite(self.sample_dir + '/epoch_'+str(epoch)+'_input.bmp',(input_batch[0,:,:,0])*255)
+                cv2.imwrite(self.sample_dir + '/epoch_'+str(epoch)+'_recon.bmp',((recon_img[0,:,:,0])+1)*127.5)
+                cv2.imwrite(self.sample_dir + '/epoch_'+str(epoch)+'_input.bmp',((input_img[0,:,:,0])+1)*127.5)
 
     def save(self, checkpoint_dir, step):
         model_name = "dnn.model"
@@ -253,7 +258,6 @@ class vae(object):
             #df_param_pred_all.to_csv(self.test_dir+'/result_test_prediction.csv', index=False)
 
         print("mean regression loss : ")
-        print(np.mean(loss_list)/args.alpha)
         print("total time")
         print(time.time() - start_time)
 

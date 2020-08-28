@@ -13,11 +13,14 @@ def encoder(inputs, reuse=False):
             assert tf.get_variable_scope().reuse is False
         with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
             #inputs = slim.flatten(inputs)
-            net = slim.conv2d(inputs=inputs, num_outputs=8, kernel_size=[3, 3], stride=2,normalizer_fn=slim.batch_norm, scope='conv1') #128x128
-            net = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv2') #64x64
-            net = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv3') #32x32
-            mean = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv4_1') #16x16
-            covariance = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv4_2') #16x16
+            en_dim = 32
+            net = slim.conv2d(inputs=inputs, num_outputs=en_dim, kernel_size=[3, 3], stride=2,normalizer_fn=slim.batch_norm, scope='conv1') #128x128xen_dim
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*2, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv2') #64x64xen_dim*2
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv3') #32x32xen_dim*4
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv4') #16x16xen_dim*8
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[3, 3], stride=1, normalizer_fn=slim.batch_norm, scope='conv5') #16x16xen_dim*8
+            mean = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=1, normalizer_fn=slim.batch_norm, scope='conv6_1') #16x16
+            covariance = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=1, normalizer_fn=slim.batch_norm, scope='conv6_2') #16x16
 
         return mean, covariance
 
@@ -27,12 +30,16 @@ def decoder(inputs, reuse=False):
             tf.get_variable_scope().reuse_variables()
         else:
             assert tf.get_variable_scope().reuse is False
-        with slim.arg_scope([slim.conv2d_transpose], padding='SAME', activation_fn=tf.nn.relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
-            net = slim.conv2d_transpose(inputs, 32, 3, 2, scope="deconv1") # 32x32
-            net = slim.conv2d_transpose(net, 16, 3, 2, scope="deconv2") # 64x64
-            net = slim.conv2d_transpose(net, 8, 3, 2, scope="deconv3") # 128x128
-            net = slim.conv2d_transpose(net, 1, 3, 2, scope="deconv4") # 256x256
-        return net
+        with slim.arg_scope([slim.conv2d_transpose], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
+            de_dim = 32
+            net = slim.conv2d_transpose(inputs, de_dim*8, 3, 1, scope="deconv1") # 16x16xde_dim*8
+            net = slim.conv2d_transpose(net, de_dim*8, 3, 1, scope="deconv2") # 16x16xde_dim*8
+            net = slim.conv2d_transpose(net, de_dim*4, 3, 2, scope="deconv3") # 32x32xde_dim*4
+            net = slim.conv2d_transpose(net, de_dim*2, 3, 2, scope="deconv4") # 64x64xde_dim*2
+            net = slim.conv2d_transpose(net, de_dim, 3, 2, scope="deconv5") # 128x128xde_dim
+            net = slim.conv2d_transpose(net, 1, 3, 2, scope="deconv6") # 256x256x1
+        net = slim.conv2d(net, 1, 3, 1, activation_fn=None, scope="deconv7") # 256x256x1
+        return tf.nn.tanh(net)
 
 def discriminator(inputs, reuse=False):
     with tf.variable_scope("discriminator"):
@@ -41,12 +48,15 @@ def discriminator(inputs, reuse=False):
         else:
             assert tf.get_variable_scope().reuse is False
         with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
-            net = slim.conv2d(input, 32, 4, 2, scope='conv_0')
+            net = slim.conv2d(inputs, 32, 4, 2, scope='conv_0')
             for i in range(3):
                 net = slim.conv2d(net, 32, 4, 2, scope='conv_%d' % (i+1))
             net = slim.conv2d(net, 32*6, 4, 2, scope='conv_-2')
-        net = slim.conv2d(net, 1, 4, 2, scope='conv_-1')
+            net = slim.conv2d(net, 1, 4, 2, scope='conv_-1')
+            net = slim.conv2d(net, 1, 1, 1, scope='conv_-0')
     return net
+    
+    
     
 def feature_extraction_network(inputs, reuse=False):
     '''
