@@ -3,24 +3,35 @@ import tensorflow as tf
 from ops import *
 from utils import *
 
+# Base model : BiGAN architecture
+# code source : https://github.com/YOUSIKI/BiGAN.TensorLayer/blob/celeba/model.py
 
-def encoder(inputs, reuse=False):
+def encoder(inputs, use_batchnorm=True, reuse=False):
     with tf.variable_scope("vae_encoder"):
-        # image is 256 x 256 x input_c_dim
         if reuse:
             tf.get_variable_scope().reuse_variables()
         else:
             assert tf.get_variable_scope().reuse is False
-        with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
-            #inputs = slim.flatten(inputs)
+        with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=None, weights_initializer = tf.initializers.random_normal(stddev=0.02)):
+            net = inputs
+            num_pooling = int(math.log(256,2) - math.log(float(8,2)))
+            for i in range(num_pooling):
+                filters = int(min(128, 32*(2**i)))
+                net = slim.conv2d(net, filters, 5, 2, scope='enc_conv2D_'+str(i))
+                if use_batchnorm:net = slim.batch_norm(net, activation_fn=tf.nn.leaky_relu)
+                else: net = slim.layer_norm(net, activation_fn=tf.nn.leaky_relu)
+            
             en_dim = 32
-            net = slim.conv2d(inputs=inputs, num_outputs=en_dim, kernel_size=[3, 3], stride=2,normalizer_fn=slim.batch_norm, scope='conv1') #128x128xen_dim
-            net = slim.conv2d(inputs=net, num_outputs=en_dim*2, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv2') #64x64xen_dim*2
-            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv3') #32x32xen_dim*4
-            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[3, 3], stride=2, normalizer_fn=slim.batch_norm, scope='conv4') #16x16xen_dim*8
-            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[3, 3], stride=1, normalizer_fn=slim.batch_norm, scope='conv5') #16x16xen_dim*8
-            mean = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=1, normalizer_fn=slim.batch_norm, scope='conv6_1') #16x16
-            covariance = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=1, normalizer_fn=slim.batch_norm, scope='conv6_2') #16x16
+            net = slim.conv2d(inputs=inputs, num_outputs=en_dim, kernel_size=[5, 5], stride=2, activation_fn=tf.nn.leaky_relu, scope='conv1') #128x128xen_dim
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*2, kernel_size=[5, 5], stride=2, scope='conv2') #64x64xen_dim*2
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.leaky_relu, scope = 'batch1') # gamma init?
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*4, kernel_size=[5, 5], stride=2, scope='conv3') #32x32xen_dim*4
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.leaky_relu, scope = 'batch2')
+            net = slim.conv2d(inputs=net, num_outputs=en_dim*8, kernel_size=[5, 5], stride=2, scope='conv4') #16x16xen_dim*8
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.leaky_relu, scope = 'batch3')
+            
+            mean = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[5, 5], stride=1, scope='conv6_1') #16x16
+            covariance = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[5, 5], stride=1, scope='conv6_2') #16x16
 
         return mean, covariance
 
@@ -30,15 +41,18 @@ def decoder(inputs, reuse=False):
             tf.get_variable_scope().reuse_variables()
         else:
             assert tf.get_variable_scope().reuse is False
-        with slim.arg_scope([slim.conv2d_transpose], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
+        with slim.arg_scope([slim.conv2d_transpose], padding='SAME', activation_fn=None, weights_initializer = tf.initializers.random_normal(stddev=0.02)): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
             de_dim = 32
-            net = slim.conv2d_transpose(inputs, de_dim*8, 3, 1, scope="deconv1") # 16x16xde_dim*8
-            net = slim.conv2d_transpose(net, de_dim*8, 3, 1, scope="deconv2") # 16x16xde_dim*8
-            net = slim.conv2d_transpose(net, de_dim*4, 3, 2, scope="deconv3") # 32x32xde_dim*4
-            net = slim.conv2d_transpose(net, de_dim*2, 3, 2, scope="deconv4") # 64x64xde_dim*2
-            net = slim.conv2d_transpose(net, de_dim, 3, 2, scope="deconv5") # 128x128xde_dim
-            net = slim.conv2d_transpose(net, 1, 3, 2, scope="deconv6") # 256x256x1
-        net = slim.conv2d(net, 1, 3, 1, activation_fn=None, scope="deconv7") # 256x256x1
+            net = slim.conv2d_transpose(inputs, de_dim*8, 5, 1, scope="deconv1") # 16x16xde_dim*8 <==check
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.relu, scope = 'batch1') # <==check
+            net = slim.conv2d_transpose(net, de_dim*4, 5, 2, scope="deconv2") # 32x32xde_dim*4
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.relu, scope = 'batch2')
+            net = slim.conv2d_transpose(net, de_dim*2, 5, 2, scope="deconv3") # 64x64xde_dim*2
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.relu, scope = 'batch3')
+            net = slim.conv2d_transpose(net, de_dim, 5, 2, scope="deconv4") # 128x128xde_dim
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.relu, scope = 'batch4')
+            net = slim.conv2d_transpose(net, 1, 5, 2, scope="deconv5") # 256x256x1
+            net = slim.conv2d(net, 1, 5, 1, activation_fn=None, scope="deconv6") # 256x256x1 <= check
         return tf.nn.tanh(net)
 
 def discriminator(inputs, reuse=False):
@@ -48,113 +62,21 @@ def discriminator(inputs, reuse=False):
         else:
             assert tf.get_variable_scope().reuse is False
         with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
-            net = slim.conv2d(inputs, 32, 4, 2, scope='conv_0')
-            for i in range(3):
-                net = slim.conv2d(net, 32, 4, 2, scope='conv_%d' % (i+1))
-            net = slim.conv2d(net, 32*6, 4, 2, scope='conv_-2')
-            net = slim.conv2d(net, 1, 4, 2, scope='conv_-1')
-            net = slim.conv2d(net, 1, 1, 1, scope='conv_-0')
-    return net
+            d_dim = 32
+            net = slim.conv2d(inputs, d_dim, 5, 2, scope='conv_0')
+            net = slim.conv2d(net, d_dim*2, 5, 2, scope='conv_1')
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.leaky_relu, scope = 'batch1') # <==check
+            net = slim.dropout(net,0.8)
+            net = slim.conv2d(net, d_dim*4, 5, 2, scope='conv_2')
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.leaky_relu, scope = 'batch2') # <==check
+            net = slim.dropout(net,0.8)
+            net = slim.conv2d(net, d_dim*8, 5, 2, scope='conv_3')
+            net = slim.batch_norm(net, decay=0.9, activation_fn = tf.nn.leaky_relu, scope = 'batch3') # <==check
+            net = slim.dropout(net,0.8)
+            net = slim.fully_connected(net, 1, activation_fn = tf.identity, scope='fc')
+
+    return net  
     
-    
-    
-def feature_extraction_network(inputs, reuse=False):
-    '''
-    input : 64,64,1
-    conv_1 : 64,64,64
-    conv_2 : 64,64,64
-    pool_1 : 32,32,64
-    conv_3 : 32,32,128
-    pool_2 : 16,16,128
-    conv_4 : 16,16,256
-    pool_3 : 8,8,256
-    feature layer : 512
-    '''
-    with tf.variable_scope("feature_extraction_network"):
-        # image is 256 x 256 x input_c_dim
-        if reuse:
-            tf.get_variable_scope().reuse_variables()
-        else:
-            assert tf.get_variable_scope().reuse is False
-
-        with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
-            #inputs = slim.flatten(inputs)
-            net = slim.conv2d(inputs=inputs, num_outputs=64, kernel_size=[3, 3], normalizer_fn=slim.batch_norm, scope='conv1') 
-            net = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], normalizer_fn=slim.batch_norm, scope='conv2') 
-            net = slim.max_pool2d(inputs=net, kernel_size=[2, 2], scope='pool1')
-            net = slim.conv2d(inputs=net, num_outputs=128, kernel_size=[3, 3], normalizer_fn=slim.batch_norm, scope='conv3') 
-            net = slim.max_pool2d(inputs=net, kernel_size=[2, 2], scope='pool2')
-            net = slim.conv2d(inputs=net, num_outputs=256, kernel_size=[3, 3], normalizer_fn=slim.batch_norm, scope='conv4')
-            net = slim.max_pool2d(inputs=net, kernel_size=[2, 2], scope='pool3')
-            net = slim.flatten(net, scope='flatten')
-            net = slim.fully_connected(net, 512)
-            net = tf.expand_dims(net, axis=2)
-        return net
-
-
-def prediction_network(inputs, reuse=False):
-
-    with tf.variable_scope("prediction_network"):
-
-        if reuse:
-            tf.get_variable_scope().reuse_variables()
-        else:
-            assert tf.get_variable_scope().reuse is False
-
-        with slim.arg_scope([slim.fully_connected], activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()):
-            inputs = slim.flatten(inputs)
-            net_a = slim.fully_connected(inputs, 512)
-            net_a = slim.fully_connected(net_a, 512)
-            spectrum_a = slim.fully_connected(net_a, 101)
-
-            net_b = slim.fully_connected(inputs, 512)
-            net_b = slim.fully_connected(net_b, 512)
-            spectrum_b = slim.fully_connected(net_b, 101)
-
-            spectra = tf.concat([spectrum_a, spectrum_b], axis=1)
-            spectra = tf.expand_dims(spectra, axis=2)
-        return spectra
-
-
-def recognition_network(feature, spectra, latent_dims, reuse=False):
-
-    with tf.variable_scope("recognition_network"):
-
-        if reuse:
-            tf.get_variable_scope().reuse_variables()
-        else:
-            assert tf.get_variable_scope().reuse is False
-        with slim.arg_scope([slim.fully_connected], activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()):
-            spectra = slim.flatten(spectra)
-            feature = slim.flatten(feature)
-            spectrum_a, spectrum_b = spectra[:,:101], spectra[:,101:]
-            net = tf.concat([feature, spectrum_a, spectrum_b], axis=1)
-            mean = slim.fully_connected(net, latent_dims)
-            covariance = slim.fully_connected(net, latent_dims)
-
-        return mean, covariance
-
-def reconstruction_network(spectra, latent_variables, reuse=False):
-
-    with tf.variable_scope("reconstruction_network"):
-
-        if reuse:
-            tf.get_variable_scope().reuse_variables()
-        else:
-            assert tf.get_variable_scope().reuse is False
-        with slim.arg_scope([slim.conv2d_transpose, slim.fully_connected], activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()):
-            spectra = slim.flatten(spectra)
-            spectrum_a, spectrum_b = spectra[:,:101], spectra[:,101:]
-            net = tf.concat([spectrum_a, spectrum_b, latent_variables], axis=1)
-            net = slim.fully_connected(net, 512) # 512
-            net = slim.fully_connected(net, 512) # 512
-            net = slim.fully_connected(net, 8*8*256) # 8*8*256
-            net = tf.reshape(net, [-1,8,8,256])
-            net = slim.conv2d_transpose(inputs=net, num_outputs=128, kernel_size=[3, 3], stride=2) # (16, 16, 128)
-            net = slim.conv2d_transpose(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=2) # (32, 32, 64)
-            net = slim.conv2d_transpose(inputs=net, num_outputs=1, kernel_size=[3, 3], stride=2)  # (64, 64, 1)
-
-        return net
 
 def abs_criterion(in_, target):
     return tf.reduce_mean(tf.abs(in_ - target))
@@ -169,6 +91,9 @@ def mse_criterion(in_, target):
 
 def sce_criterion(logits, labels):
     return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=labels))
+
+#def bce_criterion(logits, labels):
+#    return tf.reduce_mean(tf.nn.sig)
 
 def get_random_crop(image, crop_height, crop_width):
 

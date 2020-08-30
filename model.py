@@ -31,9 +31,9 @@ class vae(object):
         self.sample_dir = args.pj_dir + 'sample'
         self.test_dir =  args.pj_dir + 'test'
         self.dataset_dir = args.pj_dir + 'data'
-        dir_path = "D:/Experimental/2020/CycleGAN-tensorflow/datasets/200513_HKC_7th/trainA/"
+        #dir_path = "D:/Experimental/2020/CycleGAN-tensorflow/datasets/200513_HKC_7th/trainA/"
+        dir_path = "D:/Dataset/mvtec_anomaly_detection/transistor/train/good/"
         self.img_path = self.load_data(dir_path)
-
 
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
@@ -43,7 +43,6 @@ class vae(object):
             os.makedirs(self.test_dir)
         if not os.path.exists(self.dataset_dir):
             os.makedirs(self.dataset_dir)
-
 
         self._build_model(args)
         
@@ -78,24 +77,29 @@ class vae(object):
 
         self.input_image = tf.placeholder(tf.float32, [None, 256, 256, 1], name='input')
 
-        mu, log_sigma = self.encoder(self.input_image, reuse=False)
-        self.latent_z = mu + tf.exp(log_sigma/2) * tf.random_normal(tf.shape(mu), 0, 1, dtype=tf.float32)
+        self.mu, self.log_sigma = self.encoder(self.input_image, reuse=False)
+        self.latent_z = self.mu + tf.exp(self.log_sigma/2) * tf.random_normal(tf.shape(self.mu), 0, 1, dtype=tf.float32)
         self.recon_image = self.decoder(self.latent_z, reuse=False)
         self.d_real = self.discriminator(self.input_image, reuse=False)
         self.d_fake = self.discriminator(self.recon_image, reuse=True)
-
+        
         # Losses
         # L_VAE
-        self.KL_div_loss = 0.5 * tf.reduce_sum(tf.square(mu) + tf.exp(log_sigma) - log_sigma - 1., 1)
+        self.KL_div_loss = tf.reduce_mean(0.5 * tf.reduce_sum(tf.square(self.mu) + tf.exp(self.log_sigma) - self.log_sigma - 1., [1,2,3]))
         self.reconstruction_loss = mse_criterion(self.input_image, self.recon_image)
+        #self.reconstruction_loss = sce_criterion(self.input_image, self.recon_image)
         #self.reconstruction_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.reshape(self.geo_labeled,[self.batch_size,64*64]),
         #                                                            logits=tf.reshape(self.geo_reconstructed_l,[self.batch_size,64*64]))
-        self.gen_adv_loss = mse_criterion(self.d_fake, tf.ones_like(self.d_fake))
-        self.l_vae = args.beta*tf.reduce_mean(self.KL_div_loss) + tf.reduce_mean(self.reconstruction_loss) + tf.reduce_mean(self.gen_adv_loss)
+        #self.gen_adv_loss = mse_criterion(self.d_fake, tf.ones_like(self.d_fake))
+        self.gen_adv_loss = sce_criterion(self.d_fake, tf.ones_like(self.d_fake))
+        #self.l_vae = args.beta*self.KL_div_loss + self.reconstruction_loss + self.gen_adv_loss
+        self.l_vae = self.KL_div_loss + self.reconstruction_loss# + self.gen_adv_loss
         
         # L_Dis
-        self.d_real_loss = mse_criterion(self.d_real, tf.ones_like(self.d_real))
-        self.d_fake_loss = mse_criterion(self.d_fake, tf.zeros_like(self.d_fake))
+        #self.d_real_loss = mse_criterion(self.d_real, tf.ones_like(self.d_real))
+        self.d_real_loss = sce_criterion(self.d_real, tf.ones_like(self.d_real))
+        #self.d_fake_loss = mse_criterion(self.d_fake, tf.zeros_like(self.d_fake))
+        self.d_fake_loss = sce_criterion(self.d_fake, tf.zeros_like(self.d_fake))
         self.l_dis = (self.d_real_loss + self.d_fake_loss)/2
 
         self.loss_summary = tf.summary.scalar("loss", self.l_dis)
@@ -125,6 +129,8 @@ class vae(object):
 
         self.vae_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
             .minimize(self.l_vae, var_list=self.vae_vars, global_step = global_step)
+        #self.g_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
+        #    .minimize(self.gen_adv_loss, var_list=self.vae_vars, global_step = global_step)
         self.d_optim = tf.train.AdamOptimizer(learning_rate, beta1=args.beta1) \
             .minimize(self.l_dis, var_list=self.disc_vars, global_step = global_step)
 
@@ -156,24 +162,29 @@ class vae(object):
                 input_batch = self._load_batch(self.img_path, idx)
 
                 # Update network
-                _, recon_img, input_img = self.sess.run([self.vae_optim, self.recon_image, self.input_image], \
+                _, recon_img, input_img, vae_loss = self.sess.run([self.vae_optim, self.recon_image, self.input_image, self.l_vae], \
                     feed_dict={self.input_image: input_batch, self.lr: 0.001})#args.lr})
+                #_ = self.sess.run([self.g_optim], \
+                #    feed_dict={self.input_image: input_batch, self.lr: 0.001})#args.lr})
+                #_, c_lr, vae_loss, disc_loss = self.sess.run([self.d_optim, learning_rate, self.l_vae, self.l_dis], \
+                #    feed_dict={self.input_image: input_batch, self.lr: 0.01})#args.lr})
 
-                _, c_lr, vae_loss, disc_loss = self.sess.run([self.d_optim, learning_rate, self.l_vae, self.l_dis], \
-                    feed_dict={self.input_image: input_batch, self.lr: 0.01})#args.lr})
-
+                KL_div_loss, reconstruction_loss, gen_adv_loss, latent_z = self.sess.run([self.KL_div_loss, self.reconstruction_loss, self.gen_adv_loss, self.latent_z], \
+                    feed_dict={self.input_image: input_batch, self.lr: 0.01})
 
                 #self.writer.add_summary(summary_str, counter)
 
                 counter += 1
                 if idx%10==0:
-                    print(("Epoch: [%2d] [%4d/%4d] time: %4.4f vae loss: %4.4f disc loss: %4.4f lr: %4.7f" % (
-                        epoch, idx, batch_idxs, time.time() - start_time, vae_loss, disc_loss, c_lr)))
+                    print(("Epoch: [%2d] [%4d/%4d] time: %4.4f vae loss: %4.4f" % (
+                        epoch, idx, batch_idxs, time.time() - start_time, vae_loss)))
+
+                    print(("KL_div_loss : [%4.4f], recon_loss : [%4.4f], gen adv loss : [%4.4f]") %(KL_div_loss, reconstruction_loss, gen_adv_loss))
 
             if epoch%500 == 0:
                 self.save(self.checkpoint_dir, counter)
 
-            if epoch%5 == 0: # save sample image
+            if epoch%1 == 0: # save sample image
                 cv2.imwrite(self.sample_dir + '/epoch_'+str(epoch)+'_recon.bmp',((recon_img[0,:,:,0])+1)*127.5)
                 cv2.imwrite(self.sample_dir + '/epoch_'+str(epoch)+'_input.bmp',((input_img[0,:,:,0])+1)*127.5)
 
