@@ -39,6 +39,4 @@ def main():
             model.test_reconstruction(args)
 
 if __name__ == '__main__':
-    print("Original paper : Probabilistic representation and inverse design of metamaterials based on a deep generative model with semi-supervised learning strategy")
-    print("https://arxiv.org/abs/1901.10819")
     main()
