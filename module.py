@@ -5,7 +5,9 @@ from utils import *
 
 # Base model : BiGAN architecture
 # code source : https://github.com/YOUSIKI/BiGAN.TensorLayer/blob/celeba/model.py
-# Basem model : https://github.com/StefanDenn3r/Unsupervised_Anomaly_Detection_Brain_MRI
+# Base model : https://github.com/StefanDenn3r/Unsupervised_Anomaly_Detection_Brain_MRI
+
+bottleneck_resolution = 16
 
 def encoder(inputs, use_batchnorm=True, reuse=False):
     with tf.variable_scope("Encoder"):
@@ -16,7 +18,7 @@ def encoder(inputs, use_batchnorm=True, reuse=False):
         with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=None, weights_initializer = tf.initializers.random_normal(stddev=0.02)):
             net = inputs
             # down sampling
-            num_pooling = int(math.log(256,2) - math.log(float(8),2)) # 5
+            num_pooling = int(math.log(256,2) - math.log(float(bottleneck_resolution),2)) # 5
             for i in range(num_pooling):
                 filters = int(min(128, 32*(2**i)))
                 net = slim.conv2d(net, filters, 5, 2, scope='enc_conv2D_'+str(i))
@@ -44,17 +46,17 @@ def decoder(z_vae, use_batchnorm=False, reuse=False):
             assert tf.get_variable_scope().reuse is False
         with slim.arg_scope([slim.conv2d_transpose], padding='SAME', activation_fn=None, weights_initializer = tf.initializers.random_normal(stddev=0.02)): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
             
-            r_dim = 8*8*64
+            r_dim = bottleneck_resolution*bottleneck_resolution*64
             # dense
             net = slim.fully_connected(z_vae, r_dim)
             # dropout
             net = slim.dropout(net, 0.8) # <== check
             # reshape
-            net = tf.reshape(net, [-1,8,8,64]) # <== check # match with r_dim
+            net = tf.reshape(net, [-1,bottleneck_resolution,bottleneck_resolution,64]) # <== check # match with r_dim
             # intermediate conv reverse
             net = slim.conv2d(net, 64, 1)
             # upsampling
-            num_upsampling = int(math.log(256,2) - math.log(float(8),2)) # 5
+            num_upsampling = int(math.log(256,2) - math.log(float(bottleneck_resolution),2)) # 5
             if use_batchnorm: net = slim.batch_norm(net, activation_fn=tf.nn.relu)
             else: net = slim.layer_norm(net, activation_fn=tf.nn.relu)
             for i in range(num_upsampling):
@@ -74,15 +76,13 @@ def discriminator(inputs, use_batchnorm=False, reuse=False):
             assert tf.get_variable_scope().reuse is False
         with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=tf.nn.leaky_relu, weights_initializer = tf.initializers.he_normal()): #, weights_initializer=tf.truncated_normal_initializer(stddev=0.01)): 
             net = inputs
-            num_pooling = int(math.log(256,2) - math.log(float(8),2)) # 5
+            num_pooling = int(math.log(256,2) - math.log(float(bottleneck_resolution),2)) # 5
             for i in range(num_pooling):
                 filters = int(min(128, 32*(2**i)))
                 net = slim.conv2d(net, filters, 5, 2, scope='dis_conv2D_'+str(i))
                 if use_batchnorm: net = slim.batch_norm(net, activation_fn=tf.nn.leaky_relu)
                 else: net = slim.layer_norm(net, activation_fn=tf.nn.leaky_relu)            
             d_out = slim.fully_connected(net, 1, activation_fn = None)
-
-        # "for GP" check
 
     return d_out  
     

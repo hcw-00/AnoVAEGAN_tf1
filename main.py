@@ -10,7 +10,7 @@ def get_params():
     parser.add_argument('--dataset_dir', dest='dataset_dir', default='train_1000', help='path of the dataset') # 200411_HKC_3rd
     parser.add_argument('--epoch', dest='epoch', type=int, default=1500, help='# of epoch')
     parser.add_argument('--epoch_step', dest='epoch_step', type=int, default=500, help='# of epoch to decay lr')
-    parser.add_argument('--batch_size', dest='batch_size', type=int, default=4, help='# images in batch')
+    parser.add_argument('--batch_size', dest='batch_size', type=int, default=1, help='# images in batch')
     parser.add_argument('--train_size', dest='train_size', type=int, default=1e8, help='# images used to train')
     parser.add_argument('--lr', dest='lr', type=float, default=0.0002, help='initial learning rate for adam') # default=0.0002
     parser.add_argument('--beta1', dest='beta1', type=float, default=0.5, help='momentum term of adam')
