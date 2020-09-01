@@ -74,24 +74,22 @@ class vae(object):
         # ref : https://github.com/hwalsuklee/tensorflow-mnist-VAE/blob/master/vae.py
         # log sigma ref : https://wiseodd.github.io/techblog/2016/12/10/variational-autoencoder/
 
-
         self.kl_weight = 1
 
         self.input_image = tf.placeholder(tf.float32, [None, 256, 256, 1], name='input')
 
-        self.z_mu, self.z_log_sigma, self.z_sigma = self.encoder(self.input_image,  reuse=False)
+        self.z_mu, self.z_log_sigma, self.z_sigma = self.encoder(self.input_image, args.bottleneckresolution, reuse=False)
         self.z_vae = self.z_mu + tf.random_normal(tf.shape(self.z_sigma)) * self.z_sigma
-        self.recon_image = self.decoder(self.z_vae)
+        self.recon_image = self.decoder(self.z_vae, args.bottleneckresolution)
         
-        self.d_real = self.discriminator(self.input_image, reuse=False)
-        self.d_fake = self.discriminator(self.recon_image, reuse=True)
+        self.d_real = self.discriminator(self.input_image,args.bottleneckresolution, reuse=False)
+        self.d_fake = self.discriminator(self.recon_image,args.bottleneckresolution, reuse=True)
 
         #### for GP ####
         alpha = tf.random_uniform(shape=[args.batch_size, 1], minval=0., maxval=1.)  # eps
         diff = tf.reshape((self.recon_image - self.input_image), [args.batch_size, np.prod(self.input_image.get_shape().as_list()[1:])])
         x_hat = self.input_image + tf.reshape(alpha * diff, [args.batch_size, *self.input_image.get_shape().as_list()[1:]])
-        d_hat = self.discriminator(x_hat, reuse=True)
-
+        d_hat = self.discriminator(x_hat,args.bottleneckresolution, reuse=True)
 
         # Losses
         self.kl_div = tf.reduce_mean(0.5 * tf.reduce_sum(tf.square(self.z_mu) + tf.square(self.z_sigma) - tf.log(tf.square(self.z_sigma)) - 1, axis=1))

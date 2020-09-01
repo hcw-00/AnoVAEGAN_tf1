@@ -21,6 +21,8 @@ def get_params():
     parser.add_argument('--pj_dir', dest='pj_dir', default='./', help='sample, logs, models are saved here')
     parser.add_argument('--L1_lambda', dest='L1_lambda', type=float, default=10.0, help='weight on L1 term in objective')
     parser.add_argument('--beta', dest='beta', type=int, default=1, help='weight on kl div loss')
+    parser.add_argument('--bottleneckresolution', dest='bottleneckresolution', type=int, default=16, help='bottleneckresolution')
+    parser.add_argument('--z_dim', dest='z_dim', type=int, default=128, help='latent vector dimension')
 
     args = parser.parse_args()
     return args

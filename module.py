@@ -7,9 +7,9 @@ from utils import *
 # code source : https://github.com/YOUSIKI/BiGAN.TensorLayer/blob/celeba/model.py
 # Base model : https://github.com/StefanDenn3r/Unsupervised_Anomaly_Detection_Brain_MRI
 
-bottleneck_resolution = 16
+#bottleneck_resolution = 16
 
-def encoder(inputs, use_batchnorm=True, reuse=False):
+def encoder(inputs, use_batchnorm=True, bottleneck_resolution=16, reuse=False):
     with tf.variable_scope("Encoder"):
         if reuse:
             tf.get_variable_scope().reuse_variables()
@@ -38,7 +38,7 @@ def encoder(inputs, use_batchnorm=True, reuse=False):
             return z_mu, z_log_sigma, z_sigma
             
 
-def decoder(z_vae, use_batchnorm=False, reuse=False):
+def decoder(z_vae, use_batchnorm=False, bottleneck_resolution=16, reuse=False):
     with tf.variable_scope("Generator"):
         if reuse:
             tf.get_variable_scope().reuse_variables()
@@ -68,7 +68,7 @@ def decoder(z_vae, use_batchnorm=False, reuse=False):
 
         return net
 
-def discriminator(inputs, use_batchnorm=False, reuse=False):
+def discriminator(inputs, bottleneck_resolution=16, use_batchnorm=False, reuse=False):
     with tf.variable_scope("Discriminator"):
         if reuse:
             tf.get_variable_scope().reuse_variables()
